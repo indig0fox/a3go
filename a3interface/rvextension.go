@@ -7,6 +7,7 @@ package a3interface
 */
 import "C"
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,9 @@ import (
 // Config defines how calls to this extension will be handled
 // it can be configured using method calls against it
 var Config configStruct = configStruct{}
+
+var activeContext context.Context
+var closeReasonFnc context.CancelCauseFunc
 
 func init() {
 	Config.Init()
@@ -27,6 +31,44 @@ func init() {
 func RVExtensionVersion(output *C.char, outputsize C.size_t) {
 	result := Config.rvExtensionVersion
 	replyToSyncArmaCall(result, output, outputsize)
+}
+
+type key int
+
+var armaCtxKey key
+
+type ArmaExtensionContext struct {
+	SteamID           string
+	FileSource        string
+	MissionNameSource string
+	ServerName        string
+}
+
+// passed just before all calls of exported functions
+// in C/C++: void __stdcall RVExtensionContext(const char **args, int argsCnt)
+//
+//export RVExtensionContext
+func RVExtensionContext(args **C.char, argsCnt C.int) {
+	// convert args into context object
+	// process the C vector into a Go slice
+	var offset = unsafe.Sizeof(uintptr(0))
+	var data []string
+	for index := C.int(0); index < argsCnt; index++ {
+		data = append(data, C.GoString(*args))
+		args = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(args)) + offset))
+	}
+
+	callContextObj := ArmaExtensionContext{
+		SteamID:           data[0],
+		FileSource:        data[1],
+		MissionNameSource: data[2],
+		ServerName:        data[3],
+	}
+
+	// create a new context that will timeout after 800ms, so that we don't block Arma and we avoid a 301 EXECUTION_WARNING_TAKES_TOO_LONG
+	activeContext, _ = context.WithTimeout(context.Background(), 800*time.Millisecond)
+	activeContext = context.WithValue(activeContext, armaCtxKey, callContextObj)
+	activeContext, closeReasonFnc = context.WithCancelCause(activeContext)
 }
 
 // called by Arma when in the format of: "extensionName" callExtension "command"
@@ -50,9 +92,9 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 
 	// check if the callback channel is set for this command
 	// first with the full command
-	if _, ok := Config.rvExtensionChannels[command]; !ok {
+	if _, ok := Config.rvExtensionFunctions[command]; !ok {
 		// then with the substring
-		if _, ok := Config.rvExtensionChannels[commandSubstr]; !ok {
+		if _, ok := Config.rvExtensionFunctions[commandSubstr]; !ok {
 			// log an error if it isn't
 			writeErrChan(command, fmt.Errorf("no channel set"))
 			return
@@ -63,15 +105,29 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 	}
 
 	// get channel
-	channel := Config.rvExtensionChannels[desiredCommand]
-	if channel == nil {
+	fnc := Config.rvExtensionFunctions[desiredCommand]
+	if fnc == nil {
 		writeErrChan(command, fmt.Errorf("channel not set"))
 		return
 	}
-	// send full command to channel
-	go func(channel chan string) {
-		channel <- command
-	}(channel)
+	// call the function pointer
+	go (*fnc)(activeContext.Value(armaCtxKey).(ArmaExtensionContext), closeReasonFnc, command)
+
+	// on context close, send a reply to Arma
+	go func() {
+		<-activeContext.Done()
+
+		// get reason provided by context closure
+		reason := context.Cause(activeContext)
+		if reason != nil {
+			// if the reason is not nil, send it to Arma
+			replyToSyncArmaCall(reason.Error(), output, outputsize)
+		} else {
+			// otherwise, send the default response
+			replyToSyncArmaCall(response, output, outputsize)
+		}
+	}()
+
 }
 
 // called by Arma when in the format of: "extensionName" callExtension ["command", ["data"]]
@@ -87,9 +143,9 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 	replyToSyncArmaCall(response, output, outputsize)
 
 	// get channel
-	channel := Config.rvExtensionArgsChannels[command]
-	if channel == nil {
-		writeErrChan(command, fmt.Errorf("channel not set"))
+	fnc := Config.rvExtensionArgsFunctions[command]
+	if fnc == nil {
+		writeErrChan(command, fmt.Errorf("function not set"))
 		return
 	}
 
@@ -105,10 +161,25 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 	// append timestamp in nanoseconds
 	data = append(data, fmt.Sprintf("%d", time.Now().UnixNano()))
 
-	go func(channel chan []string, data []string) {
-		// send the data to the channel
-		channel <- data
-	}(channel, data)
+	// call the function pointer
+	go (*fnc)(activeContext.Value(armaCtxKey).(ArmaExtensionContext), closeReasonFnc, command, data)
+
+	// on context close, send a reply to Arma
+	go func() {
+		<-activeContext.Done()
+
+		defaultResponse := fmt.Sprintf(`["Function: %s", "nb params: %d"]`, command, argc)
+		// get reason provided by context closure
+		reason := context.Cause(activeContext)
+		if reason != nil {
+			// if the reason is not nil, send it to Arma
+			replyToSyncArmaCall(response, output, outputsize)
+		} else {
+			// otherwise, send the default response
+			replyToSyncArmaCall(defaultResponse, output, outputsize)
+		}
+	}()
+
 }
 
 // replyToSyncArmaCall will respond to a synchronous extension call from Arma

@@ -1,6 +1,7 @@
 package assemblyfinder
 
 import (
+	"path/filepath"
 	"unsafe"
 )
 
@@ -69,5 +70,10 @@ func GetModulePath() string {
 	modPath := C.GetModulePath()
 	defer C.free(unsafe.Pointer(modPath))
 	// fmt.Printf("Running on %s, module path: %s\n", runtime.GOOS, C.GoString(modPath))
-	return C.GoString(modPath)
+	pathStr := C.GoString(modPath)
+	absPath, err := filepath.Abs(pathStr)
+	if err != nil {
+		panic(err)
+	}
+	return absPath
 }
