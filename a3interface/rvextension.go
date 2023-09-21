@@ -7,35 +7,27 @@ package a3interface
 */
 import "C"
 import (
-	"context"
 	"fmt"
 	"strings"
-	"time"
 	"unsafe"
 )
 
-// Config defines how calls to this extension will be handled
-// it can be configured using method calls against it
-var Config configStruct = configStruct{}
+var activeContext *ArmaExtensionContext
 
-var activeContext context.Context
-var closeReasonFnc context.CancelCauseFunc
+// Config is the central configuration used by this library
+var config *configStruct = new(configStruct)
 
 func init() {
-	Config.Init()
+	// initialize the config struct
+	config.init()
 }
 
 // called by Arma to get the version of the extension
 //
 //export RVExtensionVersion
 func RVExtensionVersion(output *C.char, outputsize C.size_t) {
-	result := Config.rvExtensionVersion
-	replyToSyncArmaCall(result, output, outputsize)
+	replyToSyncArmaCall(config.version, output, outputsize)
 }
-
-type key int
-
-var armaCtxKey key
 
 type ArmaExtensionContext struct {
 	SteamID           string
@@ -58,17 +50,12 @@ func RVExtensionContext(args **C.char, argsCnt C.int) {
 		args = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(args)) + offset))
 	}
 
-	callContextObj := ArmaExtensionContext{
+	activeContext = &ArmaExtensionContext{
 		SteamID:           data[0],
 		FileSource:        data[1],
 		MissionNameSource: data[2],
 		ServerName:        data[3],
 	}
-
-	// create a new context that will timeout after 800ms, so that we don't block Arma and we avoid a 301 EXECUTION_WARNING_TAKES_TOO_LONG
-	activeContext, _ = context.WithTimeout(context.Background(), 800*time.Millisecond)
-	activeContext = context.WithValue(activeContext, armaCtxKey, callContextObj)
-	activeContext, closeReasonFnc = context.WithCancelCause(activeContext)
 }
 
 // called by Arma when in the format of: "extensionName" callExtension "command"
@@ -78,56 +65,57 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 
 	var command string = C.GoString(input)
 	var commandSubstr string = strings.Split(command, "|")[0]
-	var desiredCommand string
-	var response string = "OK"
 
-	if command == ":TIMESTAMP:" {
-		response = getTimestamp()
-		replyToSyncArmaCall(response, output, outputsize)
-		return
-	}
-
-	// send default or timestamp reply immediately
-	replyToSyncArmaCall(response, output, outputsize)
-
-	// check if the callback channel is set for this command
-	// first with the full command
-	if _, ok := Config.rvExtensionFunctions[command]; !ok {
-		// then with the substring
-		if _, ok := Config.rvExtensionFunctions[commandSubstr]; !ok {
-			// log an error if it isn't
-			writeErrChan(command, fmt.Errorf("no channel set"))
+	// look for registration
+	registration := config.getRegistration(command)
+	if registration == nil {
+		registration = config.getRegistration(commandSubstr)
+		if registration == nil {
+			writeErrChan(command, fmt.Errorf("command not registered"))
+			replyToSyncArmaCall(
+				fmt.Sprintf(`["Command %s not registered!"]`, command),
+				output, outputsize)
 			return
 		}
-		desiredCommand = commandSubstr
-	} else {
-		desiredCommand = command
 	}
 
-	// get channel
-	fnc := Config.rvExtensionFunctions[desiredCommand]
+	// if RunInBackground is true for this registration, send default response
+	// to Arma and run the function in the background
+	// data can be sent back to arma using WriteArmaCallback
+	if registration.RunInBackground {
+		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
+	}
+
+	// get function pointer
+	fnc := registration.Function
 	if fnc == nil {
-		writeErrChan(command, fmt.Errorf("channel not set"))
+		writeErrChan(command, fmt.Errorf("function not set"))
+		replyToSyncArmaCall(
+			fmt.Sprintf(`["RVExtension function not set for command %s"]`, command),
+			output, outputsize)
 		return
 	}
-	// call the function pointer
-	go (*fnc)(activeContext.Value(armaCtxKey).(ArmaExtensionContext), closeReasonFnc, command)
 
-	// on context close, send a reply to Arma
-	go func() {
-		<-activeContext.Done()
+	// if running in background, launch the function in an asynchronous goroutine and return
+	if registration.RunInBackground {
+		go (fnc)(*activeContext, command)
+		return
+	}
 
-		// get reason provided by context closure
-		reason := context.Cause(activeContext)
-		if reason != nil {
-			// if the reason is not nil, send it to Arma
-			replyToSyncArmaCall(reason.Error(), output, outputsize)
-		} else {
-			// otherwise, send the default response
-			replyToSyncArmaCall(response, output, outputsize)
-		}
-	}()
-
+	// otherwise, Arma is awaiting a reply
+	response, err := (fnc)(*activeContext, command)
+	if err != nil {
+		writeErrChan(command, err)
+		replyToSyncArmaCall(
+			fmt.Sprintf(
+				`[%q, "Error: %s"]`,
+				command,
+				err.Error()),
+			output, outputsize)
+		return
+	} else {
+		replyToSyncArmaCall(response, output, outputsize)
+	}
 }
 
 // called by Arma when in the format of: "extensionName" callExtension ["command", ["data"]]
@@ -137,16 +125,22 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 
 	// get command as Go string
 	command := C.GoString(input)
-	// set default response
-	response := fmt.Sprintf(`["Function: %s", "nb params: %d"]`, command, argc)
 
-	replyToSyncArmaCall(response, output, outputsize)
-
-	// get channel
-	fnc := Config.rvExtensionArgsFunctions[command]
-	if fnc == nil {
-		writeErrChan(command, fmt.Errorf("function not set"))
+	// look for registration
+	registration := config.getRegistration(command)
+	if registration == nil {
+		writeErrChan(command, fmt.Errorf("command not registered"))
+		replyToSyncArmaCall(
+			fmt.Sprintf(`["Command %s not registered!"]`, command),
+			output, outputsize)
 		return
+	}
+
+	// if RunInBackground is true for this registration, send default response
+	// to Arma and run the function in the background
+	// data can be sent back to arma using WriteArmaCallback
+	if registration.RunInBackground {
+		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
 	}
 
 	// now, we'll process the data
@@ -158,59 +152,34 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 		argv = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(argv)) + offset))
 	}
 
-	// append timestamp in nanoseconds
-	data = append(data, fmt.Sprintf("%d", time.Now().UnixNano()))
-
-	// call the function pointer
-	go (*fnc)(activeContext.Value(armaCtxKey).(ArmaExtensionContext), closeReasonFnc, command, data)
-
-	// on context close, send a reply to Arma
-	go func() {
-		<-activeContext.Done()
-
-		defaultResponse := fmt.Sprintf(`["Function: %s", "nb params: %d"]`, command, argc)
-		// get reason provided by context closure
-		reason := context.Cause(activeContext)
-		if reason != nil {
-			// if the reason is not nil, send it to Arma
-			replyToSyncArmaCall(response, output, outputsize)
-		} else {
-			// otherwise, send the default response
-			replyToSyncArmaCall(defaultResponse, output, outputsize)
-		}
-	}()
-
-}
-
-// replyToSyncArmaCall will respond to a synchronous extension call from Arma
-// it returns a single string and any wait time will block Arma
-func replyToSyncArmaCall(
-	response string,
-	output *C.char,
-	outputsize C.size_t,
-) {
-	// Reply to a synchronous call from Arma with a string response
-	result := C.CString(response)
-	defer C.free(unsafe.Pointer(result))
-	var size = C.strlen(result) + 1
-	if size > outputsize {
-		size = outputsize
-	}
-	C.memmove(unsafe.Pointer(output), unsafe.Pointer(result), size)
-}
-
-// writeErrChan will write an error to the error channel for a command
-func writeErrChan(command string, err error) {
-	if Config.errChan == nil {
+	// get function pointer
+	fnc := registration.ArgsFunction
+	if fnc == nil {
+		writeErrChan(command, fmt.Errorf("function not set"))
+		replyToSyncArmaCall(
+			fmt.Sprintf(`["RVExtensionArgs function not set for command %s"]`, command),
+			output, outputsize)
 		return
 	}
-	go func() {
-		Config.errChan <- []string{command, err.Error()}
-	}()
-}
 
-func getTimestamp() string {
-	// get the current unix timestamp in nanoseconds
-	return fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	// return time.Now().Format("2006-01-02 15:04:05")
+	// if running in background, launch the function in an asynchronous goroutine and return
+	if registration.RunInBackground {
+		go (fnc)(*activeContext, command, data)
+		return
+	}
+
+	// otherwise, Arma is awaiting a reply
+	response, err := (fnc)(*activeContext, command, data)
+	if err != nil {
+		writeErrChan(command, err)
+		replyToSyncArmaCall(
+			fmt.Sprintf(
+				`[%q, "Error: %s"]`,
+				command,
+				err.Error()),
+			output, outputsize)
+		return
+	} else {
+		replyToSyncArmaCall(response, output, outputsize)
+	}
 }
