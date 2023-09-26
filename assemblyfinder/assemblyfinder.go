@@ -54,7 +54,7 @@ char* GetModulePath() {
     Dl_info dl_info;
     dladdr((void*)GetModulePath, &dl_info);
 
-    char* path = dl_info.dli_fname;
+    const char* path = dl_info.dli_fname;
     char* result = (char*)malloc(strlen(path) + 1);
     strcpy(result, path);
 

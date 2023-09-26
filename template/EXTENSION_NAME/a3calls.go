@@ -36,8 +36,8 @@ func receiveTestCommandArgs(
 	), nil
 }
 
-func createDB(ctx a3interface.ArmaExtensionContext, data string) (string, error) {
-	db, err := sql.Open("sqlite3", "./foo.db")
+func saveCaller(ctx a3interface.ArmaExtensionContext, data string) (string, error) {
+	db, err := sql.Open("sqlite3", "./test.db")
 	if err != nil {
 		return "", err
 	}

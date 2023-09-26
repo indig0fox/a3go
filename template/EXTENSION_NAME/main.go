@@ -36,8 +36,11 @@ func init() {
 	testAsyncCommand.Register()
 
 	// create DB
-	createDBCommand := a3interface.NewRegistration("createDB")
+	createDBCommand := a3interface.NewRegistration("saveMyCall")
 	createDBCommand.Function = saveCaller
 	createDBCommand.Register()
 
 }
+
+// NOTE: This main function must exist for building the DLL, but isn't exposed and won't be called by Arma. You could build an exe or binary using this library for testing or other purposes and, upon running it, this main function would be called.
+func main() {}

@@ -79,13 +79,6 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 		}
 	}
 
-	// if RunInBackground is true for this registration, send default response
-	// to Arma and run the function in the background
-	// data can be sent back to arma using WriteArmaCallback
-	if registration.RunInBackground {
-		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
-	}
-
 	// get function pointer
 	fnc := registration.Function
 	if fnc == nil {
@@ -96,8 +89,11 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 		return
 	}
 
-	// if running in background, launch the function in an asynchronous goroutine and return
+	// if RunInBackground is true for this registration, send default response
+	// to Arma and run the function in the background
+	// data can be sent back to arma using WriteArmaCallback
 	if registration.RunInBackground {
+		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
 		go (fnc)(*activeContext, command)
 		return
 	}
@@ -108,9 +104,10 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 		writeErrChan(command, err)
 		replyToSyncArmaCall(
 			fmt.Sprintf(
-				`[%q, "Error: %s"]`,
+				`[%q, %q]`,
 				command,
-				err.Error()),
+				fmt.Sprintf("Error: %q", err.Error()),
+			),
 			output, outputsize)
 		return
 	} else {
@@ -139,6 +136,7 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 	// if RunInBackground is true for this registration, send default response
 	// to Arma and run the function in the background
 	// data can be sent back to arma using WriteArmaCallback
+	// do this so parsing arguments doesn't block Arma
 	if registration.RunInBackground {
 		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
 	}
@@ -174,9 +172,12 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 		writeErrChan(command, err)
 		replyToSyncArmaCall(
 			fmt.Sprintf(
-				`[%q, "Error: %s"]`,
+				`[%q, %q]`,
 				command,
-				err.Error()),
+				fmt.Sprintf(
+					"Error: %s",
+					err.Error()),
+			),
 			output, outputsize)
 		return
 	} else {
