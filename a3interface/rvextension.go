@@ -94,7 +94,12 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 	// data can be sent back to arma using WriteArmaCallback
 	if registration.RunInBackground {
 		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
-		go (fnc)(*activeContext, command)
+		go func() {
+			_, err := (fnc)(*activeContext, command)
+			if err != nil {
+				writeErrChan(command, err)
+			}
+		}()
 		return
 	}
 
@@ -162,7 +167,12 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 
 	// if running in background, launch the function in an asynchronous goroutine and return
 	if registration.RunInBackground {
-		go (fnc)(*activeContext, command, data)
+		go func() {
+			_, err := (fnc)(*activeContext, command, data)
+			if err != nil {
+				writeErrChan(command, err)
+			}
+		}()
 		return
 	}
 

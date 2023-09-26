@@ -36,6 +36,15 @@ func receiveTestCommandArgs(
 	), nil
 }
 
+func saveCallerArgs(ctx a3interface.ArmaExtensionContext, command string, args []string) (string, error) {
+	response, err := saveCaller(ctx, args[0])
+	if err != nil {
+		return "", err
+	}
+
+	return response, nil
+}
+
 func saveCaller(ctx a3interface.ArmaExtensionContext, data string) (string, error) {
 	db, err := sql.Open("sqlite3", "./test.db")
 	if err != nil {
@@ -64,5 +73,5 @@ func saveCaller(ctx a3interface.ArmaExtensionContext, data string) (string, erro
 		return "", err
 	}
 
-	return "Logged row to database!", nil
+	return `["Logged row to database!"]`, nil
 }

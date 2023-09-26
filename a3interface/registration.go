@@ -19,13 +19,39 @@ type RVExtensionRegistration struct {
 		args []string) (string, error)
 }
 
-func (r *RVExtensionRegistration) Register() {
-	config.registrations = append(config.registrations, *r)
-}
-
 func NewRegistration(command string) *RVExtensionRegistration {
 	return &RVExtensionRegistration{
 		Command:         command,
 		DefaultResponse: `["Command ` + command + ` called"]`,
 	}
+}
+
+func (r *RVExtensionRegistration) SetDefaultResponse(response string) *RVExtensionRegistration {
+	r.DefaultResponse = response
+	return r
+}
+
+// SetRunInBackground determines whether or not the library will respond instantly to Arma with DefaultResponse and run the function in a goroutine (true), or wait for a return from the function (false)
+func (r *RVExtensionRegistration) SetRunInBackground(runInBackground bool) *RVExtensionRegistration {
+	r.RunInBackground = runInBackground
+	return r
+}
+
+// SetFunction sets the function pointer that will be called in the "extension" callExtension "command|data" format
+func (r *RVExtensionRegistration) SetFunction(
+	fnc func(ctx ArmaExtensionContext, data string) (string, error)) *RVExtensionRegistration {
+	r.Function = fnc
+	return r
+}
+
+// SetArgsFunction sets the function pointer that will be called in the "extension" callExtension ["command", ["data"]] format
+func (r *RVExtensionRegistration) SetArgsFunction(
+	fnc func(ctx ArmaExtensionContext, command string, args []string) (string, error)) *RVExtensionRegistration {
+	r.ArgsFunction = fnc
+	return r
+}
+
+// Register adds this registration to the list of registrations that will be used to determine how to handle calls to the extension
+func (r *RVExtensionRegistration) Register() {
+	config.registrations = append(config.registrations, *r)
 }
