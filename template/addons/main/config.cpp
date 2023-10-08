@@ -1,5 +1,5 @@
 class CfgPatches {
-	class TestAddon {
+	class a3go_main {
 		units[] = {};
 		weapons[] = {};
 		requiredVersion = 0.1;
@@ -8,10 +8,14 @@ class CfgPatches {
 };
 
 class CfgFunctions {
-	class testa {
+	class a3go {
 		class functions {
-			file = "x\addons\testa\main\functions";
-			class test {};
+			file = "x\addons\a3go\main\functions";
+			class postInit {postInit = 1;};
+			class testSync {};
+			class testAsync {};
+			class testSaveCaller {};
+			class hashToJson {};
 		};
 	};
 };

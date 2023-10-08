@@ -32,24 +32,24 @@ Build the extension first, then we can use HEMTT to build the addon and include 
 
 Run this from the project root.
 
-```bash
+```powershell
 docker pull x1unix/go-mingw:1.20
 
 # Compile x64 Windows DLL
-docker run --rm -it -v ${PWD}:/go/work -w /go/work x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME_x64.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=amd64 -e CGO_ENABLED=1 x1unix/go-mingw:1.20  go build -o ./template/dist/EXTENSION_NAME_x64.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
 
 # Compile x86 Windows DLL
-docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=386 x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=386 -e CGO_ENABLED=1 x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
 
 # Compile x64 Windows EXE
-docker run --rm -it -v ${PWD}:/go/work -w /go/work x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME_x64.exe -ldflags '-w -s' ./template/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=amd64 -e CGO_ENABLED=1 x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME_x64.exe -ldflags '-w -s' ./template/EXTENSION_NAME
 ```
 
 ### EXTENSION: COMPILING FOR LINUX
 
 Run this from the project root.
 
-```bash
+```powershell
 docker build -t indifox926/build-a3go:linux-so -f ./build/Dockerfile.build .
 
 # Compile x64 Linux .so
@@ -63,9 +63,9 @@ docker run --rm -it -v ${PWD}:/app -e GOOS=linux -e GOARCH=386 -e CGO_ENABLED=1 
 
 Download the [HEMTT binary](https://github.com/BrettMayson/HEMTT/releases/latest) and place it in [./template](./template), or wherever your .hemtt folder is located. The configuration inside will be read by the HEMTT exe and defines the build process.
 
-```bash
+```powershell
 cd ./template
-./hemtt.exe build
+./hemtt.exe release
 ```
 
 ## LICENSE

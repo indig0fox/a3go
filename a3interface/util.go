@@ -26,7 +26,11 @@ func replyToSyncArmaCall(
 	if size > outputsize {
 		size = outputsize
 	}
-	C.memmove(unsafe.Pointer(output), unsafe.Pointer(result), size)
+	ptr := C.memmove(unsafe.Pointer(output), unsafe.Pointer(result), size)
+	if ptr == nil {
+		fmt.Println("Error copying string to output")
+	}
+
 }
 
 // writeErrChan will write an error to the error channel for a command

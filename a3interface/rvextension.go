@@ -9,6 +9,7 @@ import "C"
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -20,6 +21,18 @@ var config *configStruct = new(configStruct)
 func init() {
 	// initialize the config struct
 	config.init()
+
+	// set the default version
+	config.version = "DEVELOPMENT"
+
+	// init blank active context
+	activeContext = &ArmaExtensionContext{
+		SteamID:           "123456789",
+		FileSource:        "test",
+		MissionNameSource: "test",
+		ServerName:        "test",
+	}
+
 }
 
 // called by Arma to get the version of the extension
@@ -56,6 +69,26 @@ func RVExtensionContext(args **C.char, argsCnt C.int) {
 		MissionNameSource: data[2],
 		ServerName:        data[3],
 	}
+	fmt.Printf("RVExtensionContext: %+v\n", activeContext)
+	time.Sleep(1 * time.Second)
+}
+
+func TestRVExtensionCall(
+	output *string,
+	outputsize uint64,
+	input *string,
+) {
+	fmt.Println("TestRVExtension")
+	fmt.Println("output: ", output)
+	fmt.Println("outputsize: ", outputsize)
+	fmt.Println("input: ", input)
+
+	RVExtension(
+		(*C.char)(C.CString(*input)),
+		C.size_t(outputsize),
+		(*C.char)(C.CString(*input)),
+	)
+
 }
 
 // called by Arma when in the format of: "extensionName" callExtension "command"
@@ -65,6 +98,9 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 
 	var command string = C.GoString(input)
 	var commandSubstr string = strings.Split(command, "|")[0]
+
+	fmt.Println("command: ", command)
+	fmt.Println("commandSubstr: ", commandSubstr)
 
 	// look for registration
 	registration := config.getRegistration(command)
@@ -79,6 +115,16 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 		}
 	}
 
+	fmt.Printf("registration: %+v\n", registration)
+	fmt.Printf("runInBackground: %t\n", registration.RunInBackground)
+
+	// if RunInBackground is true for this registration, send default response
+	// to Arma and run the function in the background
+	// data can be sent back to arma using WriteArmaCallback
+	if registration.RunInBackground {
+		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
+	}
+
 	// get function pointer
 	fnc := registration.Function
 	if fnc == nil {
@@ -89,11 +135,10 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 		return
 	}
 
-	// if RunInBackground is true for this registration, send default response
-	// to Arma and run the function in the background
-	// data can be sent back to arma using WriteArmaCallback
+	fmt.Printf("fnc: %v\n", fnc)
+
+	// if running in background, launch the function in an asynchronous goroutine and return
 	if registration.RunInBackground {
-		replyToSyncArmaCall(registration.DefaultResponse, output, outputsize)
 		go func() {
 			_, err := (fnc)(*activeContext, command)
 			if err != nil {
@@ -153,6 +198,11 @@ func RVExtensionArgs(output *C.char, outputsize C.size_t, input *C.char, argv **
 	for index := C.int(0); index < argc; index++ {
 		data = append(data, C.GoString(*argv))
 		argv = (**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(argv)) + offset))
+	}
+
+	command = RemoveEscapeQuotes(command)
+	for index, item := range data {
+		data[index] = RemoveEscapeQuotes(item)
 	}
 
 	// get function pointer

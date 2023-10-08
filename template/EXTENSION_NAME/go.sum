@@ -1,2 +1,2 @@
-github.com/indig0fox/a3go v0.2.1 h1:Ixr/182pGd5qPbFYgHINWt5YtyKaO7Yo/va/17nF/Vg=
-github.com/indig0fox/a3go v0.2.1/go.mod h1:8htVwBiIAVKpT1Jyb+5dm7GuLAAevTXgw7UKxSlOawY=
+github.com/mattn/go-sqlite3 v1.14.17 h1:mCRHCLDUBXgpKAqIKsaAaAsrAlbkeomtRFKXh2L6YIM=
+github.com/mattn/go-sqlite3 v1.14.17/go.mod h1:2eHXhiwb8IkHr+BDWZGa96P6+rkvnG63S2DGjv9HUNg=

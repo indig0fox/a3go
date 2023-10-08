@@ -2,52 +2,98 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/indig0fox/a3go/a3interface"
+	"github.com/indig0fox/a3go/assemblyfinder"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-func receiveTestCommand(
+func ReceiveTestCommand(
 	ctx a3interface.ArmaExtensionContext,
 	data string,
 ) (string, error) {
 
 	dataSlice := strings.Split(data, "|")
-	return fmt.Sprintf(`["Called by %s", "%s", "%s", "%s"]`,
+	dataSliceWithoutPrefix := dataSlice[1:]
+	for i, v := range dataSliceWithoutPrefix {
+		dataSliceWithoutPrefix[i] = fmt.Sprintf(`%q`, v)
+	}
+
+	s := fmt.Sprintf(`["Called by %s", [%s]]`,
 		ctx.SteamID,
-		dataSlice[0],
-		dataSlice[1],
-		dataSlice[2],
-	), nil
+		strings.Join(dataSliceWithoutPrefix, ", "),
+	)
+	fmt.Println(s)
+
+	return s, nil
 }
 
-func receiveTestCommandArgs(
+func ReceiveTestCommandArgs(
 	ctx a3interface.ArmaExtensionContext,
 	command string,
 	args []string,
 ) (string, error) {
 
-	return fmt.Sprintf(`["Called by %s", "%s", "%s", "%s"]`,
+	return fmt.Sprintf(`["Called by %s", %q, %q]`,
 		ctx.SteamID,
 		command,
-		args[0],
-		args[1],
+		args,
 	), nil
 }
 
-func saveCallerArgs(ctx a3interface.ArmaExtensionContext, command string, args []string) (string, error) {
-	response, err := saveCaller(ctx, args[0])
+func ReturnJSONFromHashMapArgs(
+	ctx a3interface.ArmaExtensionContext,
+	command string,
+	args []string,
+) (string, error) {
+
+	JSONInterface, err := a3interface.ParseSQF(args[0])
+	if err != nil {
+		return "", err
+	}
+	JSONMapStringInterface, err := a3interface.ParseSQFHashMap(JSONInterface)
 	if err != nil {
 		return "", err
 	}
 
-	return response, nil
+	JSONString, err := json.MarshalIndent(JSONMapStringInterface, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`%s`, JSONString), nil
 }
 
-func saveCaller(ctx a3interface.ArmaExtensionContext, data string) (string, error) {
-	db, err := sql.Open("sqlite3", "./test.db")
+func SaveCallerArgs(
+	ctx a3interface.ArmaExtensionContext,
+	command string,
+	args []string,
+) (string, error) {
+	_, err := SaveCaller(ctx, args[0])
 	if err != nil {
+		return "", err
+	}
+
+	arrArg1, err := a3interface.ParseSQF(args[0])
+	if err != nil {
+		return "", err
+	}
+
+	res := fmt.Sprintf(`["Logged row!", Args: %q, Parsed: %q]`, args, arrArg1)
+	return res, nil
+
+}
+
+func SaveCaller(ctx a3interface.ArmaExtensionContext, data string) (string, error) {
+	modulePath := assemblyfinder.GetModulePath()
+	moduleDir := filepath.Dir(modulePath)
+	fmt.Println("moduleDir: ", moduleDir)
+	db, err := sql.Open("sqlite3", filepath.Join(moduleDir, "call_log.db"))
+	if err != nil {
+		fmt.Println(err)
 		return "", err
 	}
 	defer db.Close()
