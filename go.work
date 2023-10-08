@@ -1,7 +1,0 @@
-go 1.20
-
-use (
-	./template/EXTENSION_NAME
-	./a3interface
-	./assemblyfinder
-)
