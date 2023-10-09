@@ -6,6 +6,279 @@ Go library for Arma 3 extension development. Tested on Go 1.20.7.
 
 All calls from Arma will receive an immediate basic response. To send data back to Arma from your extension, use the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback).
 
+To see an example of this library in use, see the [template](./template) folder and the [Attendance Tracker](https://github.com/indig0fox/Arma3-AttendanceTracker/tree/main) addon.
+
+## a3interface API
+
+### Registering Commands
+
+The optimal method of registering a command to listen for is via a method chaining API.
+
+> Note: See [a3interface.ArmaExtensionContext](###a3interface.ArmaExtensionContext) for more information on the context object passed to your function. See [a3interface Helper Functions](###a3interface-Helper-Functions) for more information on helper functions for removing extra escape quotations for strings, and for processing SQF arrays and hashmaps.
+
+```go
+
+/* REGISTER COMMAND HANDLER
+Takes a single string parameter
+Provide the exact text (case-sensitive) that will be used to call the command from Arma
+This will be read from extension calls in the following orders:
+For RVExtension:
+ "extension" callExtension "commandText" (1)
+ "extension" callExtension "commandText|arg1|arg2" (2)
+For RVExtensionArgs:
+ "extension" callExtension ["commandText", ["arg1", "arg2"]] (1) */
+a3interface.NewRegistration(commandText).
+
+/* SYNC
+Takes a single boolean parameter
+Run synchronously and respond to Arma with a string response or error
+This is the default behavior */
+  SetRunInBackground(false).
+/* ASYNC
+Run asynchronously and respond to Arma with a default response
+Then start a goroutine to run the function in the background */
+  SetRunInBackground(true).
+
+/* DEFAULT RESPONSE
+Takes a single string parameter
+Configure the default response if RunInBackground is true
+This will default to `["Command ` + command + ` called"]` */
+  SetDefaultResponse(
+    `["Received command ` + 
+    commandText + 
+    `, starting background process"]`
+  ).
+
+/* SET RVEXTENSION FUNCTION
+Takes a single function parameter in format
+  func(
+    ctx a3interface.ArmaExtensionContext, data string,
+  ) (string, error)
+You can define the function inline or pass a function variable
+This function will be called when the command is received from Arma and
+the format `"extension" callExtension "commandText|arg1|arg2"` is used
+
+In this example, we search the data string for a specific value and return an error if not found.
+
+SYNCHRONOUS BEHAVIOR
+If RunInBackground is false, then the function will be run synchronously and the return value will be sent to Arma as a string response. In this case (assuming parseSimpleArray is used on it), it would be:
+["Found specific value in data"]
+If 'specific value' was not in the data, however, then the return value sent to Arma in this case would be:
+["commandText", "Error: Invalid data"]
+This allows you to parse the array and detect the command text as well as use the SQF find command to search for the error string.
+It's generally recommended to design your return data to Arma 3 in a stringified array format, as this allows you to send multiple values back to Arma in a single response and use parseSimpleArray to get your elements.
+
+ASYNCHRONOUS BEHAVIOR
+If RunInBackground is true, then the function will be run asynchronously and the default response will be sent to Arma immediately. In this case, it would be ["Received command commandText, starting background process"] because we set it above.
+The function itself will then be called, as if its original defined scope, but with the parameters passed from Arma and in a non-blocking goroutine.
+*/
+  SetFunction(
+    func(
+      ctx a3interface.ArmaExtensionContext, data string,
+    ) (string, error) {
+      // If specific value not in data, return error
+      if !strings.Contains(data, "specific value") {
+        return "", errors.New("Invalid data")
+      }
+      // Do something with data
+      return `["Found specific value in data"]`, nil
+    },
+  ).
+
+/* SET RVEXTENSIONARGS FUNCTION
+Takes a single function parameter in format
+  func(
+    ctx a3interface.ArmaExtensionContext, command string, data []string,
+  ) (string, error)
+You can define the function inline or pass a function variable
+This function will be called when the command is received from Arma and
+the format `"extension" callExtension ["commandText", ["arg1", "arg2"]]` is used
+
+In this example, we search the data array for a specific value and return an error if not found.
+
+SYNCHRONOUS BEHAVIOR
+If RunInBackground is false, then the function will be run synchronously and the return value will be sent to Arma as a string response. In this case (assuming parseSimpleArray is used on it), it would be:
+["Found specific value in data"]
+If 'specific value' was not in the data, however, then the return value sent to Arma in this case would be:
+["commandText", "Error: Invalid data"]
+This allows you to parse the array and detect the command text as well as use the SQF find command to search for the error string.
+It's generally recommended to design your return data to Arma 3 in a stringified array format, as this allows you to send multiple values back to Arma in a single response and use parseSimpleArray to get your elements.
+
+ASYNCHRONOUS BEHAVIOR
+If RunInBackground is true, then the function will be run asynchronously and the default response will be sent to Arma immediately. In this case, it would be ["Received command commandText, starting background process"] because we set it above.
+The function itself will then be called, as if its original defined scope, but with the parameters passed from Arma and in a non-blocking goroutine.
+*/
+  SetArgsFunction(
+    func(
+      ctx a3interface.ArmaExtensionContext, command string, data []string,
+    ) (string, error) {
+      // preprocess the elements to remove double quotes
+      // see below for more information on helper functions
+      data = a3interface.RemoveEscapeQuotes(data)
+      // If specific value not in data, return error
+      for _, v := range data {
+        if !strings.Contains(v, "specific value") {
+          return "", errors.New("Invalid data")
+        }
+      }
+      // Do something with data
+      return `["Found specific value in data"]`, nil
+    },
+  ).
+
+  /* REGISTER THE COMMAND
+  This will register the command with the package so that calls with this command text will be handled.
+  If you do not call this, then the command will not be registered and will not be handled.
+  */
+  Register()
+```
+
+### a3interface.ArmaExtensionContext
+
+The context object passed to your function when a command is received from Arma contains four fields that provide context behind the call.
+
+> See [A3 Wiki - callExtension](https://community.bistudio.com/wiki/callExtension) for more info.
+
+```go
+type ArmaExtensionContext struct {
+  SteamID           string
+  FileSource        string
+  MissionNameSource string
+  ServerName        string
+}
+```
+
+### a3interface Helper Functions
+
+#### RemoveEscapeQuotes
+
+When strings are passed from Arma to Go, they are escaped with double quotes. This function will remove the double quotes from the string.
+
+This function is important to use so you get your expected values when parsing the data.
+
+```go
+// definition
+func RemoveEscapeQuotes(input string) string
+
+// backticks indicate a raw string literal as you would process in Go
+// `"my string"` -> `my string`
+// `"[""my string""]"` -> `["my string"]`
+// `"[""my string"", 34]"` -> `["my string", 34]`
+
+// For RVExtensionArgs:
+for _, v := range data {
+  v = a3interface.RemoveEscapeQuotes(v)
+}
+```
+
+#### ParseSQF
+
+This function will take a raw string, expecting an SQF array or hashmap, and return an interface that you can check the indexes of and typecast to the appropriate type.
+
+> It's important to note that this function includes a call to RemoveEscapeQuotes for the common use case of sending arrays and hashes to the extension, so do not preprocess the data with that function before passing it to this one!
+
+```go
+// definition
+func ParseSQF(input string) interface{}
+
+// !! all numerics (without quotes) should be parsed as float64
+
+// backticks indicate a raw string literal as you would process in Go
+// Arma: ["1", 2, 3] -> Extension: `"[""1"", 2, 3]" ->
+// ParseSQF return: []interface{}{"1", 2, 3}
+// r[0].(string) -> "1"
+// r[1].(float64) -> 2.0
+//
+// Arma: [1, 2, [3, 4]] -> Extension: `"[1, 2, [3, 4]]"` ->
+// ParseSQF return: `[]interface{}{1, 2, []interface{}{3, 4}}`
+// r[1].(float64) -> 2.00
+// r[2].([]interface{})[1].(float64) -> 4.00
+// `"[""my string"", 34.2]"` -> `[]interface{}{"my string", 34.2}`
+```
+
+#### ParseSQFHashMap
+
+This function will take an interface from ParseSQF, expecting an SQF HashMap, and return a map[string]interface{} with the keys and values. It will process nested values.
+
+```go
+// definition
+func ParseSQFHashMap(input interface{}) (map[string]interface{}, error) 
+
+/* 
+backticks indicate a raw string literal as you would process in Go
+Arma: [["key1", "value1"], ["keysExtra", ["myKey", "yeah!"], ["twokey", "oh no!"]]] -> 
+Extension: `"[[""key1"", ""value1""], [""keysExtra"", [[""myKey"", ""yeah!""], [""twokey"", ""oh no!""]]]"` ->
+ParseSQFHashMap return: map[string]interface{}{
+  "key1": "value1",
+  "keysExtra": map[string]interface{}{
+    "myKey": "yeah!",
+    "twokey": "oh no!",
+  },
+} 
+*/
+
+// example
+func ReturnJSONFromHashMapArgs(
+  ctx a3interface.ArmaExtensionContext,
+  command string,
+  args []string,
+) (string, error) {
+
+  JSONInterface, err := a3interface.ParseSQF(args[0])
+  if err != nil {
+    return "", err
+  }
+  JSONMapStringInterface, err := a3interface.ParseSQFHashMap(JSONInterface)
+  if err != nil {
+    return "", err
+  }
+
+  /* 
+  JSONMapStringInterface["key1"].(string) -> "value1"
+  extraKeys := JSONMapStringInterface["keysExtra"].(map[string]interface{})
+  extraKeys["myKey"].(string) -> "yeah!"
+  extraKeys["twokey"].(string) -> "oh no!"
+  */
+
+  JSONString, err := json.Marshal(JSONMapStringInterface)
+  if err != nil {
+    return "", err
+  }
+
+ return fmt.Sprintf(`%s`, JSONString), nil
+ /* 
+  returns
+  "{""key1"":""value1",""key2":""value2""}"
+  to Arma
+ */
+}
+```
+
+## assemblyfinder API
+
+This package is provided to locate the absolute path of the loaded DLL or SO file. This is useful for locating the addon directory (regardless of what it may be named) when you want to load a resource file from the same directory.
+
+```go
+// definition
+func GetModulePath() string
+
+// example
+var dllFolder string = filepath.Dir(assemblyfinder.GetModulePath())
+var logFilePathInAddonFolder = filepath.Join(
+  dllFolder,
+  "log.txt",
+)
+func GetAConfigFile() string {
+  return filepath.Join(
+    dllFolder,
+    "config.json",
+  )
+  // returns something like C:\Program Files (x86)\Steam\steamapps\common\Arma 3\@example_addon\config.json
+  // so long as the dll is in the @example_addon folder
+  // NOTE: Extensions can also be loaded from the Arma 3 root directory, so you may need to check for that
+}
+```
+
 ## Template
 
 See [template](./template) for a working example of an addon and extension. You can follow the build steps below to compile the extension and addon.
