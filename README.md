@@ -6,141 +6,341 @@ Go library for Arma 3 extension development. Tested on Go 1.20.7.
 
 All calls from Arma will receive an immediate basic response. To send data back to Arma from your extension, use the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback).
 
-## Example
+To see an example of this library in use, see the [template](./template) folder and the [Attendance Tracker](https://github.com/indig0fox/Arma3-AttendanceTracker/tree/main) addon.
 
-```sqf
-addMissionEventHandler ["ExtensionCallback", {
-  params ["_extension", "_function", "_args"];
+## a3interface API
 
-  if (_extension isNotEqualTo "EXTENSION_NAME") exitWith {};
+### Registering Commands
 
-  _argsArr = parseSimpleArray _args;
-  if (count _argsArr isEqualTo 0) exitWith {
-    diag_log format["a3go: No arguments passed to extension. %1", _args];
-  };
+The optimal method of registering a command to listen for is via a method chaining API.
 
-  switch (_function) do {
-    case "log": {
-      diag_log format["a3go: %1", _argsArr];
-    };
-    case "timeNow": {
-      diag_log format["a3go: %1", _argsArr];
-      // passed data will always be a string, and might be double double quoted!
-      timeNow = _argsArr select 0;
-    };
-  };
-}];
-```
+> Note: See [a3interface.ArmaExtensionContext](###a3interface.ArmaExtensionContext) for more information on the context object passed to your function. See [a3interface Helper Functions](###a3interface-Helper-Functions) for more information on helper functions for removing extra escape quotations for strings, and for processing SQF arrays and hashmaps.
 
 ```go
 
-import (
-  "github.com/indig0fox/a3go/a3interface"
-  "github.com/indig0fox/a3go/assemblyfinder"
-)
+/* REGISTER COMMAND HANDLER
+Takes a single string parameter
+Provide the exact text (case-sensitive) that will be used to call the command from Arma
+This will be read from extension calls in the following orders:
+For RVExtension:
+ "extension" callExtension "commandText" (1)
+ "extension" callExtension "commandText|arg1|arg2" (2)
+For RVExtensionArgs:
+ "extension" callExtension ["commandText", ["arg1", "arg2"]] (1) */
+a3interface.NewRegistration(commandText).
 
-// modulePath is the absolute path to the compiled DLL, which should be the addon folder
-var modulePath string = assemblyfinder.GetModulePath()
-// modulePathDir is the containing folder
-var modulePathDir string = path.Dir(modulePath)
+/* SYNC
+Takes a single boolean parameter
+Run synchronously and respond to Arma with a string response or error
+This is the default behavior */
+  SetRunInBackground(false).
+/* ASYNC
+Run asynchronously and respond to Arma with a default response
+Then start a goroutine to run the function in the background */
+  SetRunInBackground(true).
 
-var EXTENSION_NAME = "EXTENSION_NAME"
+/* DEFAULT RESPONSE
+Takes a single string parameter
+Configure the default response if RunInBackground is true
+This will default to `["Command ` + command + ` called"]` */
+  SetDefaultResponse(
+    `["Received command ` + 
+    commandText + 
+    `, starting background process"]`
+  ).
 
-var RVExtensionChannels = map[string]chan string {
-  ":timeNow:" : make(chan string),
-}
-var RVExtensionArgsChannels = map[string]chan []string{
- ":LOG:JOIN:":    make(chan []string),
- ":LOG:LEAVE:":   make(chan []string),
- ":LOG:MISSION:": make(chan []string),
- ":LOG:WORLD:":   make(chan []string),
-}
-var a3ErrorChan = make(chan error)
+/* SET RVEXTENSION FUNCTION
+Takes a single function parameter in format
+  func(
+    ctx a3interface.ArmaExtensionContext, data string,
+  ) (string, error)
+You can define the function inline or pass a function variable
+This function will be called when the command is received from Arma and
+the format `"extension" callExtension "commandText|arg1|arg2"` is used
 
+In this example, we search the data string for a specific value and return an error if not found.
 
-func init() {
+SYNCHRONOUS BEHAVIOR
+If RunInBackground is false, then the function will be run synchronously and the return value will be sent to Arma as a string response. In this case (assuming parseSimpleArray is used on it), it would be:
+["Found specific value in data"]
+If 'specific value' was not in the data, however, then the return value sent to Arma in this case would be:
+["commandText", "Error: Invalid data"]
+This allows you to parse the array and detect the command text as well as use the SQF find command to search for the error string.
+It's generally recommended to design your return data to Arma 3 in a stringified array format, as this allows you to send multiple values back to Arma in a single response and use parseSimpleArray to get your elements.
 
-  a3interface.SetVersion(EXTENSION_VERSION)
-  a3interface.RegisterRvExtensionArgsChannels(RVExtensionArgsChannels)
-
-
-  go func() {
-    for {
-      select {
-      case v := <-RVExtensionChannels[":timeNow:"]:
-        // to call from A3: "EXTENSION_NAME" callExtension ":timeNow:";
-        go writeTimeNow(v)
-      case v := <-RVExtensionArgsChannels[":LOG:JOIN:"]:
-        // to call from A3:"EXTENSION_NAME" callExtension [":LOG:JOIN:", ["Test1", "Test2", "Test3"]];
-        go writeAttendance(v)
-      case v := <-RVExtensionArgsChannels[":LOG:LEAVE:"]:
-        // to call from A3: "EXTENSION_NAME" callExtension [":LOG:LEAVE:", ["Test1", "Test2", "Test3"]];
-        go writeDisconnectEvent(v)
-      case v := <-RVExtensionArgsChannels[":LOG:MISSION:"]:
-        // to call from A3: "EXTENSION_NAME" callExtension [":LOG:MISSION:", ["Test1", "Test2", "Test3"]];
-        go writeMissionEvent(v)
-      case v := <-a3ErrorChan:
-        log.Println(v.Error())
+ASYNCHRONOUS BEHAVIOR
+If RunInBackground is true, then the function will be run asynchronously and the default response will be sent to Arma immediately. In this case, it would be ["Received command commandText, starting background process"] because we set it above.
+The function itself will then be called, as if its original defined scope, but with the parameters passed from Arma and in a non-blocking goroutine.
+*/
+  SetFunction(
+    func(
+      ctx a3interface.ArmaExtensionContext, data string,
+    ) (string, error) {
+      // If specific value not in data, return error
+      if !strings.Contains(data, "specific value") {
+        return "", errors.New("Invalid data")
       }
-    }
-  }()
-}
+      // Do something with data
+      return `["Found specific value in data"]`, nil
+    },
+  ).
 
-// writeTimeNow triggers the ExtensionCallback handler with:
-// ["EXTENSION_NAME", "timeNow", ["1", "2021-01-01 00:00:00"]]
-// the parameter is string because it's registered to the RVExtension handler
-func writeTimeNow(id string) {
-  // get current time
-  t := time.Now()
-  // format time
-  timeNow := t.Format("2006-01-02 15:04:05")
-  // send data back to Arma
-  a3interface.WriteArmaCallback(EXTENSION_NAME, "timeNow", id, string(timeNow))
-}
+/* SET RVEXTENSIONARGS FUNCTION
+Takes a single function parameter in format
+  func(
+    ctx a3interface.ArmaExtensionContext, command string, data []string,
+  ) (string, error)
+You can define the function inline or pass a function variable
+This function will be called when the command is received from Arma and
+the format `"extension" callExtension ["commandText", ["arg1", "arg2"]]` is used
 
-// writeAttendance triggers the ExtensionCallback handler with:
-// ["EXTENSION_NAME", "log", ["Test1", "Test2", "Test3"]]
-// the parameter is []string because it's registered to the RVExtensionArgs handler
-func writeAttendance(args []string) {
-  // ... do something with args
-  a3interface.WriteArmaCallback(EXTENSION_NAME, "log", args...)
+In this example, we search the data array for a specific value and return an error if not found.
+
+SYNCHRONOUS BEHAVIOR
+If RunInBackground is false, then the function will be run synchronously and the return value will be sent to Arma as a string response. In this case (assuming parseSimpleArray is used on it), it would be:
+["Found specific value in data"]
+If 'specific value' was not in the data, however, then the return value sent to Arma in this case would be:
+["commandText", "Error: Invalid data"]
+This allows you to parse the array and detect the command text as well as use the SQF find command to search for the error string.
+It's generally recommended to design your return data to Arma 3 in a stringified array format, as this allows you to send multiple values back to Arma in a single response and use parseSimpleArray to get your elements.
+
+ASYNCHRONOUS BEHAVIOR
+If RunInBackground is true, then the function will be run asynchronously and the default response will be sent to Arma immediately. In this case, it would be ["Received command commandText, starting background process"] because we set it above.
+The function itself will then be called, as if its original defined scope, but with the parameters passed from Arma and in a non-blocking goroutine.
+*/
+  SetArgsFunction(
+    func(
+      ctx a3interface.ArmaExtensionContext, command string, data []string,
+    ) (string, error) {
+      // preprocess the elements to remove double quotes
+      // see below for more information on helper functions
+      data = a3interface.RemoveEscapeQuotes(data)
+      // If specific value not in data, return error
+      for _, v := range data {
+        if !strings.Contains(v, "specific value") {
+          return "", errors.New("Invalid data")
+        }
+      }
+      // Do something with data
+      return `["Found specific value in data"]`, nil
+    },
+  ).
+
+  /* REGISTER THE COMMAND
+  This will register the command with the package so that calls with this command text will be handled.
+  If you do not call this, then the command will not be registered and will not be handled.
+  */
+  Register()
+```
+
+### a3interface.ArmaExtensionContext
+
+The context object passed to your function when a command is received from Arma contains four fields that provide context behind the call.
+
+> See [A3 Wiki - callExtension](https://community.bistudio.com/wiki/callExtension) for more info.
+
+```go
+type ArmaExtensionContext struct {
+  SteamID           string
+  FileSource        string
+  MissionNameSource string
+  ServerName        string
 }
 ```
 
-## Build
+### a3interface Helper Functions
+
+#### RemoveEscapeQuotes
+
+When strings are passed from Arma to Go, they are escaped with double quotes. This function will remove the double quotes from the string.
+
+This function is important to use so you get your expected values when parsing the data.
+
+```go
+// definition
+func RemoveEscapeQuotes(input string) string
+
+// backticks indicate a raw string literal as you would process in Go
+// `"my string"` -> `my string`
+// `"[""my string""]"` -> `["my string"]`
+// `"[""my string"", 34]"` -> `["my string", 34]`
+
+// For RVExtensionArgs:
+for _, v := range data {
+  v = a3interface.RemoveEscapeQuotes(v)
+}
+```
+
+#### ParseSQF
+
+This function will take a raw string, expecting an SQF array or hashmap, and return an interface that you can check the indexes of and typecast to the appropriate type.
+
+> It's important to note that this function includes a call to RemoveEscapeQuotes for the common use case of sending arrays and hashes to the extension, so do not preprocess the data with that function before passing it to this one!
+
+```go
+// definition
+func ParseSQF(input string) interface{}
+
+// !! all numerics (without quotes) should be parsed as float64
+
+// backticks indicate a raw string literal as you would process in Go
+// Arma: ["1", 2, 3] -> Extension: `"[""1"", 2, 3]" ->
+// ParseSQF return: []interface{}{"1", 2, 3}
+// r[0].(string) -> "1"
+// r[1].(float64) -> 2.0
+//
+// Arma: [1, 2, [3, 4]] -> Extension: `"[1, 2, [3, 4]]"` ->
+// ParseSQF return: `[]interface{}{1, 2, []interface{}{3, 4}}`
+// r[1].(float64) -> 2.00
+// r[2].([]interface{})[1].(float64) -> 4.00
+// `"[""my string"", 34.2]"` -> `[]interface{}{"my string", 34.2}`
+```
+
+#### ParseSQFHashMap
+
+This function will take an interface from ParseSQF, expecting an SQF HashMap, and return a map[string]interface{} with the keys and values. It will process nested values.
+
+```go
+// definition
+func ParseSQFHashMap(input interface{}) (map[string]interface{}, error) 
+
+/* 
+backticks indicate a raw string literal as you would process in Go
+Arma: [["key1", "value1"], ["keysExtra", ["myKey", "yeah!"], ["twokey", "oh no!"]]] -> 
+Extension: `"[[""key1"", ""value1""], [""keysExtra"", [[""myKey"", ""yeah!""], [""twokey"", ""oh no!""]]]"` ->
+ParseSQFHashMap return: map[string]interface{}{
+  "key1": "value1",
+  "keysExtra": map[string]interface{}{
+    "myKey": "yeah!",
+    "twokey": "oh no!",
+  },
+} 
+*/
+
+// example
+func ReturnJSONFromHashMapArgs(
+  ctx a3interface.ArmaExtensionContext,
+  command string,
+  args []string,
+) (string, error) {
+
+  JSONInterface, err := a3interface.ParseSQF(args[0])
+  if err != nil {
+    return "", err
+  }
+  JSONMapStringInterface, err := a3interface.ParseSQFHashMap(JSONInterface)
+  if err != nil {
+    return "", err
+  }
+
+  /* 
+  JSONMapStringInterface["key1"].(string) -> "value1"
+  extraKeys := JSONMapStringInterface["keysExtra"].(map[string]interface{})
+  extraKeys["myKey"].(string) -> "yeah!"
+  extraKeys["twokey"].(string) -> "oh no!"
+  */
+
+  JSONString, err := json.Marshal(JSONMapStringInterface)
+  if err != nil {
+    return "", err
+  }
+
+ return fmt.Sprintf(`%s`, JSONString), nil
+ /* 
+  returns
+  "{""key1"":""value1",""key2":""value2""}"
+  to Arma
+ */
+}
+```
+
+## assemblyfinder API
+
+This package is provided to locate the absolute path of the loaded DLL or SO file. This is useful for locating the addon directory (regardless of what it may be named) when you want to load a resource file from the same directory.
+
+```go
+// definition
+func GetModulePath() string
+
+// example
+var dllFolder string = filepath.Dir(assemblyfinder.GetModulePath())
+var logFilePathInAddonFolder = filepath.Join(
+  dllFolder,
+  "log.txt",
+)
+func GetAConfigFile() string {
+  return filepath.Join(
+    dllFolder,
+    "config.json",
+  )
+  // returns something like C:\Program Files (x86)\Steam\steamapps\common\Arma 3\@example_addon\config.json
+  // so long as the dll is in the @example_addon folder
+  // NOTE: Extensions can also be loaded from the Arma 3 root directory, so you may need to check for that
+}
+```
+
+## Template
+
+See [template](./template) for a working example of an addon and extension. You can follow the build steps below to compile the extension and addon.
+
+## Packaging your addon
+
+Once you've built the extension then the addon using the build steps below, you will have a ./template/.hemttout/build folder containing `addons` and `dist` folders, as well as the license file.
+
+Create your desired addon folder (i.e. `@example_addon`) and move the `build/addons` folder into it. Copy the extensions within `build/dist` into the `@example_addon` folder alongside the `addons` folder. Copy the LICENSE file under `build` into your `@example_addon` folder.
+
+Add this `@example_addon` folder to your Arma launcher as a "Local Mod" and you should be good to launch.
+
+*Note: [./template/addons/main/script_version.hpp](./template/addons/main/script_version.hpp) is used to provide versioning information to HEMTT. There is no CBA dependency in the example addon, but everything is included to implement that SQF Macro library if you wish.*
 
 ## Building using Docker
 
-You will need Docker Engine installed and running. This can be done on Windows or on Linux. However, you will need to use Linux containers if you're on Windows (specified in Docker Desktop settings).
+You will need Docker Engine installed and running. This can be done on Windows or on Linux. However, you will need to use Linux containers if you're on Windows (specified in Docker Desktop settings). Building this way ensures that the CGo compiler will use the correct toolchain for the target platform. Otherwise, there are issues when cross-compiling using the CGo or GCC compiler on Windows, and it will crash your game when trying to load the extension.
 
-The below assumes you're running the commands from the `EXTENSION_NAME` directory, and you have (**at minimum**) the following files:
-| File | Description |
-| --- | --- |
-| `EXTENSION_NAME.go` | The main extension file |
+*See [here](https://github.com/golang-standards/project-layout) for more information on Go project structure.*
 
-### COMPILING FOR WINDOWS
+Build the extension first, then we can use HEMTT to build the addon and include the dll and so files.
 
-```bash
+### EXTENSION: COMPILING FOR WINDOWS
+
+Run this from the project root.
+
+```powershell
 docker pull x1unix/go-mingw:1.20
 
 # Compile x64 Windows DLL
-docker run --rm -it -v ${PWD}:/go/work -w /go/work x1unix/go-mingw:1.20 go build -o dist/EXTENSION_NAME_x64.dll -buildmode=c-shared ./cmd/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=amd64 -e CGO_ENABLED=1 x1unix/go-mingw:1.20  go build -o ./template/dist/EXTENSION_NAME_x64.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
 
 # Compile x86 Windows DLL
-docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=386 x1unix/go-mingw:1.20 go build -o dist/EXTENSION_NAME.dll -buildmode=c-shared ./cmd/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=386 -e CGO_ENABLED=1 x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME.dll -buildmode=c-shared -ldflags '-w -s' ./template/EXTENSION_NAME
 
 # Compile x64 Windows EXE
-docker run --rm -it -v ${PWD}:/go/work -w /go/work x1unix/go-mingw:1.20 go build -o dist/EXTENSION_NAME_x64.exe ./cmd/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/go/work -w /go/work -e GOARCH=amd64 -e CGO_ENABLED=1 x1unix/go-mingw:1.20 go build -o ./template/dist/EXTENSION_NAME_x64.exe -ldflags '-w -s' ./template/EXTENSION_NAME
 ```
 
-### COMPILING FOR LINUX
+### EXTENSION: COMPILING FOR LINUX
 
-```bash
-docker build -t indifox926/build-a3go:linux-so -f ./build/Dockerfile.build ./cmd
+Run this from the project root.
+
+```powershell
+docker build -t indifox926/build-a3go:linux-so -f ./build/Dockerfile.build .
 
 # Compile x64 Linux .so
-docker run --rm -it -v ${PWD}:/app -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=1 -e CC=gcc indifox926/build-a3go:linux-so go build -o dist/EXTENSION_NAME_x64.so -linkshared ./cmd/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/app -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=1 -e CC=gcc indifox926/build-a3go:linux-so go build -o ./template/dist/EXTENSION_NAME_x64.so -linkshared -ldflags '-w -s' ./template/EXTENSION_NAME
 
 # Compile x86 Linux .so
-docker run --rm -it -v ${PWD}:/app -e GOOS=linux -e GOARCH=386 -e CGO_ENABLED=1 -e CC=gcc indifox926/build-a3go:linux-so go build -o dist/EXTENSION_NAME.so -linkshared ./cmd/EXTENSION_NAME
+docker run --rm -it -v ${PWD}:/app -e GOOS=linux -e GOARCH=386 -e CGO_ENABLED=1 -e CC=gcc indifox926/build-a3go:linux-so go build -o ./template/dist/EXTENSION_NAME.so -linkshared -ldflags '-w -s' ./template/EXTENSION_NAME
 ```
+
+### ADDON: COMPILE USING HEMTT
+
+Download the [HEMTT binary](https://github.com/BrettMayson/HEMTT/releases/latest) and place it in [./template](./template), or wherever your .hemtt folder is located. The configuration inside will be read by the HEMTT exe and defines the build process.
+
+```powershell
+cd ./template
+./hemtt.exe release
+```
+
+## LICENSE
+
+Arma Public License Share Alike (APL-SA) - See [LICENSE](./LICENSE) for more information.

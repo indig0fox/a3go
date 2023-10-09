@@ -1,0 +1,31 @@
+name = "A3Go Template"
+author = "IndigoFox"
+prefix = "a3go"
+mainprefix = "x"
+
+[version]
+path = "addons/main/script_version.hpp" # Default
+git_hash = 6                            # Default: 8
+
+[files]
+include = ["LICENSE", "*/*.dll", "*/*.so"]
+
+# Launched with `hemtt launch`
+[hemtt.launch.default]
+workshop = [
+  "450814997", # CBA_A3's Workshop ID
+]
+dlc = []
+optionals = []
+parameters = [
+  "-skipIntro",        # These parameters are passed to the Arma 3 executable
+  "-noSplash",         # They do not need to be added to your list
+  "-showScriptErrors", # You can add additional parameters here
+  "-debug",
+  "-filePatching",
+]
+executable = "arma3_x64" # Default: "arma3_x64"
+
+[hemtt.release]
+sign = false   # Default: true
+archive = true # Default: true

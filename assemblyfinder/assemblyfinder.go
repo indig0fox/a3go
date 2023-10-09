@@ -1,6 +1,7 @@
 package assemblyfinder
 
 import (
+	"path/filepath"
 	"unsafe"
 )
 
@@ -53,7 +54,7 @@ char* GetModulePath() {
     Dl_info dl_info;
     dladdr((void*)GetModulePath, &dl_info);
 
-    char* path = dl_info.dli_fname;
+    const char* path = dl_info.dli_fname;
     char* result = (char*)malloc(strlen(path) + 1);
     strcpy(result, path);
 
@@ -69,5 +70,10 @@ func GetModulePath() string {
 	modPath := C.GetModulePath()
 	defer C.free(unsafe.Pointer(modPath))
 	// fmt.Printf("Running on %s, module path: %s\n", runtime.GOOS, C.GoString(modPath))
-	return C.GoString(modPath)
+	pathStr := C.GoString(modPath)
+	absPath, err := filepath.Abs(pathStr)
+	if err != nil {
+		panic(err)
+	}
+	return absPath
 }
