@@ -4,9 +4,14 @@
 
 Go library for Arma 3 extension development. Tested on Go 1.20.7.
 
-All calls from Arma will receive an immediate basic response. To send data back to Arma from your extension, use the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback).
+## Features
 
-To see an example of this library in use, see the [template](./template) folder and the [Attendance Tracker](https://github.com/indig0fox/Arma3-AttendanceTracker/tree/main) addon.
+- Synchronous and Asynchronous command handling
+- Helper functions for parsing, including (nested) SQF arrays and hashmaps
+- Send callbacks for use with the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback)
+- Find the absolute path of the loaded DLL or SO file
+
+To see an example of this library in use, see the [template](./template) folder and the [Attendance Tracker](https://github.com/indig0fox/Arma3-AttendanceTracker/) addon.
 
 ## a3interface API
 
@@ -252,6 +257,71 @@ func ReturnJSONFromHashMapArgs(
   to Arma
  */
 }
+```
+
+#### WriteArmaCallback
+
+This function can be used to send a callback function to Arma from your extension. You can listen for these use the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback).
+
+```go
+// definition
+func WriteArmaCallback(
+extensionName string,
+functionName string,
+data ...string,
+) (
+err error,
+)
+
+// example Go function
+// we would register this command using SetArgsFunction, since we're expecting
+// "example_extension" callExtension ["example_callback", ["arg1", "arg2"]]
+// we'll also assume here that SetRunInBackground(false) was used to
+// demonstrate what Arma would receive (i.e. the return of this function
+// instead of a default response)
+func SendALogEntryAsACallback(
+  ctx a3interface.ArmaExtensionContext,
+  command string,
+  args []string,
+) (string, error) {
+  err := a3interface.WriteArmaCallback(
+    "example_extension",
+    "LOG",
+    "ERROR",
+    "I didn't count high enough!",
+  )
+  if err != nil {
+    return "", err
+  }
+  return `["Callback sent"]`, nil
+}
+```
+
+The SQF would look like this:
+  
+```sqf
+addMissionEventHandler ["ExtensionCallback", {
+  params ["_extension", "_function", "_data"];
+  if (_extension == "example_extension" && _function == "LOG") then {
+    private arr = parseSimpleArray _data;
+    // this will catch if the array is empty or couldn't be parsed in SQF
+    if (count arr isEqualTo 0) exitWith {};
+
+    // arr[0] -> "ERROR"
+    // arr[1] -> "I didn't count high enough!"
+    ["[%1] %2", arr[0], arr[1]] call BIS_fnc_logFormat;
+    // this will log "[ERROR] I didn't count high enough!" to the RPT
+  };
+}];
+
+private _immediateResult = "example_extension" callExtension ["example_callback", ["arg1", "arg2"]];
+hint formatText ["%1", _immediateResult];
+// _immediateResult -> "[""Callback sent""]"
+// parseSimpleArray _immediateResult -> ["Callback sent"]
+
+// if an error was returned, it would look like this:
+// _immediateResult -> "[""example_callback"", ""Error: I didn't count high enough!""]"
+// parseSimpleArray _immediateResult -> ["example_callback", "Error: I didn't count high enough!"]
 ```
 
 ## assemblyfinder API
