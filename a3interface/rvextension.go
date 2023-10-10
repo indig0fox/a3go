@@ -9,7 +9,6 @@ import "C"
 import (
 	"fmt"
 	"strings"
-	"time"
 	"unsafe"
 )
 
@@ -70,7 +69,6 @@ func RVExtensionContext(args **C.char, argsCnt C.int) {
 		ServerName:        data[3],
 	}
 	fmt.Printf("RVExtensionContext: %+v\n", activeContext)
-	time.Sleep(1 * time.Second)
 }
 
 func TestRVExtensionCall(
