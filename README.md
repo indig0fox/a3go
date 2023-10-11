@@ -4,6 +4,12 @@
 
 Go library for Arma 3 extension development. Tested on Go 1.20.7.
 
+## Usage in your Go program
+
+```go
+go get github.com/indig0fox/a3go
+```
+
 ## Features
 
 - Synchronous and Asynchronous command handling
