@@ -259,6 +259,120 @@ func ReturnJSONFromHashMapArgs(
 }
 ```
 
+#### ToArmaHashMap
+
+This function will take one of the following types and return a string that can be used in Arma. It is meant for HashMaps, but can also be used for arrays.
+
+```go
+// definition
+func ToArmaHashMap(input interface{}) string
+
+// example
+func getVulcanTranslation(textToTranslate string) (map[string]interface{}, error) {
+  // Make an HTTP request to the fun translation API and get our text in Vulcan
+  url := url.URL{
+  Scheme: "https",
+  Host:   "api.funtranslations.com",
+  Path:   "/translate/vulcan.json",
+  RawQuery: url.Values{
+    "text": []string{textToTranslate},
+  }.Encode(),
+  }
+  resp, err := http.Get(url.String())
+  if err != nil {
+  return map[string]interface{}{}, err
+  }
+  defer resp.Body.Close()
+
+  // Parse the JSON response and print the titles of the top headlines
+  var data map[string]interface{}
+  err = json.NewDecoder(resp.Body).Decode(&data)
+  if err != nil {
+  return map[string]interface{}{}, err
+  }
+  translationContent := data["contents"]
+  if translationContent == nil {
+  return map[string]interface{}{}, fmt.Errorf("No translation content found")
+  }
+
+  /* 
+    "contents": {
+      "translated": "Sos leralmin ik i ma ri thoroughly tizh-tor serving k' komihn? I talal ish-veh riolozhikaik heh duhik zherka wuh ek'kayik ornat.",
+      "text": "May I say that I have not thoroughly enjoyed serving with humans? I find their illogical and foolish emotions a constant irritant.",
+      "translation": "vulcan"
+    } 
+  */
+  return translationContent.(map[string]interface{}), nil
+  
+}
+
+// this would be registered as a command args function
+a3interface.NewRegistration("translateToVulcan").
+  SetArgsFunction(translateToVulcan).
+  SetRunInBackground(false).
+  Register()
+
+func translateToVulcan(
+  ctx a3interface.ArmaExtensionContext,
+  command string,
+  args []string,
+) (string, error) {
+
+  // get the translation
+  translation, err := getVulcanTranslation(args[0])
+  if err != nil {
+    return "", err
+  }
+
+  // this map[string]interface{} (like a JSON object) will be parsed into a stringified HashMap format for SQF
+  translationHashData := a3interface.ToArmaHashMap(translation)
+  // return to Arma
+  return translationHashData, nil
+  // returns something like
+  /* 
+    "[[""contents"", [[""translated"", ""Sos leralmin ik i ma ri thoroughly tizh-tor serving k' komihn? I talal ish-veh riolozhikaik heh duhik zherka wuh ek'kayik ornat.""], [""text"", ""May I say that I have not thoroughly enjoyed serving with humans? I find their illogical and foolish emotions a constant irritant.""], [""translation"", ""vulcan""]]]]"
+  */
+}
+```
+
+To use the above in SQF:
+  
+```sqf
+private _result = "extensionName" callExtension [
+  "translateToVulcan", 
+  ["Hello, how are you?"]
+];
+
+// NOTE: Args functions return an array with
+// [<ourData>, 0, 0]
+private _resultParsed = parseSimpleArray (_result select 0);
+if (count _resultParsed isEqualTo 0) exitWith {};
+
+private _resultHash = createHashMapFromArray _resultParsed;
+if (isNil _resultHash) exitWith {};
+
+hint formatText[
+  "Language: %1\nTranslation: %2",
+  _resultHash getOrDefault ["translation", "Unknown"],
+  _resultHash getOrDefault ["translated", "Unknown"],
+];
+// this would show in a hint:
+// Language: vulcan
+// Translation: Tonk'peh,  uf nam-tor du?
+
+
+diag_log formatText[
+  "[Translator]: Translated English to $1.\nORIGINAL:%2\nTRANSLATED: %3",
+  _resultHash getOrDefault ["translation", "Unknown"],
+  _resultHash getOrDefault ["text", "Unknown"],
+  _resultHash getOrDefault ["translated", "Unknown"],
+];
+// this would log
+// [Translator]: Translated English to vulcan.
+// ORIGINAL: Hello, how are you?
+// TRANSLATED: Tonk'peh,  uf nam-tor du?
+```
+
 #### WriteArmaCallback
 
 This function can be used to send a callback function to Arma from your extension. You can listen for these use the [Extension Callback handler](https://community.bistudio.com/wiki/Arma_3:_Mission_Event_Handlers#ExtensionCallback).
@@ -291,7 +405,7 @@ func SendALogEntryAsACallback(
     "I didn't count high enough!",
   )
   if err != nil {
-    return "", err
+    return "", errors.New("Oh no!")
   }
   return `["Callback sent"]`, nil
 }
@@ -300,6 +414,7 @@ func SendALogEntryAsACallback(
 The SQF would look like this:
   
 ```sqf
+// add a callback listener to the mission
 addMissionEventHandler ["ExtensionCallback", {
   params ["_extension", "_function", "_data"];
   if (_extension == "example_extension" && _function == "LOG") then {
@@ -307,21 +422,27 @@ addMissionEventHandler ["ExtensionCallback", {
     // this will catch if the array is empty or couldn't be parsed in SQF
     if (count arr isEqualTo 0) exitWith {};
 
-    // arr[0] -> "ERROR"
-    // arr[1] -> "I didn't count high enough!"
+    // _extension = "example_extension"
+    // _function = "LOG"
+    // _data = "[""ERROR"", ""I didn't count high enough!""]"
+    // _arr = ["ERROR", "I didn't count high enough!"]
+    // _arr[0] -> "ERROR"
+    // _arr[1] -> "I didn't count high enough!"
+
     ["[%1] %2", arr[0], arr[1]] call BIS_fnc_logFormat;
-    // this will log "[ERROR] I didn't count high enough!" to the RPT
+    // this will log "21:20:04 [ERROR] I didn't count high enough!" to the RPT
   };
 }];
 
+// make our extension call
 private _immediateResult = "example_extension" callExtension ["example_callback", ["arg1", "arg2"]];
 hint formatText ["%1", _immediateResult];
 // _immediateResult -> "[""Callback sent""]"
 // parseSimpleArray _immediateResult -> ["Callback sent"]
 
 // if an error was returned, it would look like this:
-// _immediateResult -> "[""example_callback"", ""Error: I didn't count high enough!""]"
-// parseSimpleArray _immediateResult -> ["example_callback", "Error: I didn't count high enough!"]
+// _immediateResult -> "[""example_callback"", ""Error: Oh no!""]"
+// parseSimpleArray _immediateResult -> ["example_callback", "Error: Oh no!"]
 ```
 
 ## assemblyfinder API
