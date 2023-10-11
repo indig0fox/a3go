@@ -71,24 +71,6 @@ func RVExtensionContext(args **C.char, argsCnt C.int) {
 	fmt.Printf("RVExtensionContext: %+v\n", activeContext)
 }
 
-func TestRVExtensionCall(
-	output *string,
-	outputsize uint64,
-	input *string,
-) {
-	fmt.Println("TestRVExtension")
-	fmt.Println("output: ", output)
-	fmt.Println("outputsize: ", outputsize)
-	fmt.Println("input: ", input)
-
-	RVExtension(
-		(*C.char)(C.CString(*input)),
-		C.size_t(outputsize),
-		(*C.char)(C.CString(*input)),
-	)
-
-}
-
 // called by Arma when in the format of: "extensionName" callExtension "command"
 //
 //export RVExtension
@@ -132,8 +114,6 @@ func RVExtension(output *C.char, outputsize C.size_t, input *C.char) {
 			output, outputsize)
 		return
 	}
-
-	fmt.Printf("fnc: %v\n", fnc)
 
 	// if running in background, launch the function in an asynchronous goroutine and return
 	if registration.RunInBackground {

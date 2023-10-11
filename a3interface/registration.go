@@ -56,8 +56,13 @@ func (r *RVExtensionRegistration) SetArgsFunction(
 }
 
 // Register adds this registration to the list of registrations that will be used to determine how to handle calls to the extension
-func (r *RVExtensionRegistration) Register() {
+func (r *RVExtensionRegistration) Register() error {
+	for _, reg := range config.registrations {
+		if reg.Command == r.Command {
+			return fmt.Errorf("command %s already registered", r.Command)
+		}
+	}
+
 	config.registrations = append(config.registrations, *r)
-	fmt.Printf("Registered command: %s\n", r.Command)
-	fmt.Printf("%+v\n", config.registrations)
+	return nil
 }
